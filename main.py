@@ -157,21 +157,23 @@ def main(args):
     else:
         to_blur = exposed_parts
 
+    processed_images = len(images)
+
     for index, f in enumerate(images):
         path, filename = os.path.split(f)
-        print("[ " + str(int(index/len(images)*100)).rjust(3) + "% ]  Processing file " +
-              " (" + str(index) + "/" + str(len(images)) + ") " + filename)
+        print(f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}")
         name, extension = os.path.splitext(filename)
         detection_result = detector.detect(f)
         image = cv2.imread(f)
         if image is None:
             print(f'Processing failed. Image "{filename}" may be corrupted...')
+            processed_images -= 1
             continue
         censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
         censored_file_name = filename
         out_path = out_dir + censored_file_name
         cv2.imwrite(out_path, censored_image)
-    print("[ 100% ]  Processing file " + str(index) + " of " + str(len(images)) + "...")
+    print(f"[ 100% ]  Processed {processed_images} of {len(images)}. Failed: {len(images) - processed_images}.")
 
 
 if __name__ == "__main__":
