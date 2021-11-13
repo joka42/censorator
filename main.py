@@ -164,6 +164,9 @@ def main(args):
         name, extension = os.path.splitext(filename)
         detection_result = detector.detect(f)
         image = cv2.imread(f)
+        if image is None:
+            print(f'Processing failed. Image "{filename}" may be corrupted...')
+            continue
         censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
         censored_file_name = filename
         out_path = out_dir + censored_file_name
