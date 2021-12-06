@@ -147,9 +147,16 @@ def images_in(path):
 
 def main(args):
     images = images_in(args.input)
+
     out_dir = args.output if args.output else "./"
     if not out_dir.endswith("/"):
         out_dir += "/"
+
+    if args.skip_existing:
+        existing_images = [os.path.splitext(os.path.split(image)[1])[0] for image in images_in(out_dir)]
+        images = [image for image in images if os.path.splitext(os.path.split(image)[1])[0] not in existing_images]
+        print("skipping existing")
+
     detector = NudeDetector()
     exposed_parts = ["EXPOSED_ANUS", "EXPOSED_BUTTOCKS", "EXPOSED_BREAST_F", "EXPOSED_GENITALIA_F"]
     covered_parts = ["COVERED_BUTTOCKS", "COVERED_BREAST_F", "COVERED_GENITALIA_F"]
@@ -227,6 +234,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--strict', action="store_true", default=False)
     parser.add_argument('-c', '--casual', action="store_true", default=False)
     parser.add_argument('--stamped', action="store_true", default=False)
+    parser.add_argument('--skip_existing', action="store_true", default=False)
     args = parser.parse_args()
     print(args)
     main(args)
