@@ -170,7 +170,7 @@ def main(args):
         original_image_count = len(images)
         images = [image for image in images if os.path.splitext(os.path.split(image)[1])[0] not in existing_images]
 
-        print(f"Skipping {len(images)-original_image_count} images that are already processed.")
+        print(f"Skipping {original_image_count-len(images)} images that are already processed.")
 
     detector = NudeDetector()
     exposed_parts = ["EXPOSED_ANUS", "EXPOSED_BUTTOCKS", "EXPOSED_BREAST_F", "EXPOSED_GENITALIA_F"]
@@ -187,13 +187,16 @@ def main(args):
 
     for index, f in enumerate(images):
         path, filename = os.path.split(f)
-        print(f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}")
         name, extension = os.path.splitext(filename)
 
         # Animated images
         if extension.lower() == ".gif" or extension.lower() == ".webp":
+            progress_bar = "[░░░░░░░░░░░░░░░░░░░░]"
+            base_string = f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}: "
+            print(base_string + progress_bar, end="\r", flush=True)
+
             tempdir = tempfile.mkdtemp()
-            frame_duration = 40  # defaults to 40, 25 Hz
+            frame_duration = 40  # ms, defaults to 40 ms, 25 Hz
             if extension.lower() == ".gif":
                 # ffmpeg seems to have fewer/no artifacts than the frameextractor.py that I found online
                 # it had some black artifacts in a couple of frames that I could not fix
@@ -212,11 +215,11 @@ def main(args):
             else:
                 print("Wrong image format.")
                 continue
-            print(frame_duration)
 
-            gif_frame_files = images_in(tempdir)
+            frame_files = images_in(tempdir)
             censored_frames = []
-            for index, frame_file in enumerate(gif_frame_files):
+
+            for index, frame_file in enumerate(frame_files):
                 detection_result = detector.detect(frame_file)
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
                 censored_frame = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
@@ -224,12 +227,19 @@ def main(args):
                 # Convert image to pil image
                 pil_frame = Image.fromarray(cv2.cvtColor(censored_frame, cv2.COLOR_BGR2RGB))
                 censored_frames.append(pil_frame)
+                progress = int(len(censored_frames)/len(frame_files)*20)
+                progress_bar = "[" + "█" * progress + "░" * \
+                    (20-progress) + "]" + f" (Frame {len(censored_frames)}/{len(frame_files)})"
+                print(base_string + progress_bar, end="\r", flush=True)
 
             censored_frames[0].save(os.path.join(out_dir, f'{name}.webp'), append_images=censored_frames[1:],
                                     save_all=True, optimize=False, duration=frame_duration, loop=0)
+            print("")
             continue
         # Image is not animated
         else:
+            print(f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}")
+
             detection_result = detector.detect(f)
             image = cv2.imread(f)
             if image is None:
