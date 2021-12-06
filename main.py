@@ -1,13 +1,14 @@
 import argparse
+import math
 import os
 import subprocess
 import tempfile
+import webp
 
 import cv2
 import numpy as np
 from nudenet import NudeDetector
 from PIL import Image
-import webp
 
 import frameextractor
 
@@ -59,17 +60,29 @@ def stamp(image, box):
     offset_x = min(box[0], box[2]) + int((x_dim-medium_size)/2)
     offset_y = min(box[1], box[3]) + int((y_dim-medium_size)/2)
 
-    s_img = cv2.resize(stamp, (medium_size, medium_size),
-                       interpolation=cv2.INTER_AREA)
+    # we don't want the stamp to exceed the image frame, so we have to check if it does
+    if image.shape[0] < offset_y + medium_size:
+        medium_size = image.shape[0] - offset_y
+    if image.shape[1] < offset_x + medium_size:
+        medium_size = image.shape[1] - offset_x
 
+    # resize the stamp to the medium size of the area
+    s_img = cv2.resize(stamp, (medium_size, medium_size), interpolation=cv2.INTER_AREA)
+
+    # get a matrix with alpha values between 0 and 1 from the orinal image with alpha-channel 3
     alpha_s = s_img[:, :, 3] / 255.0
     alpha_l = 1.0 - alpha_s
     for c in range(0, 3):
         try:
-            image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c] = (alpha_s * s_img[:, :, c] +
-                                                                                      alpha_l * image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c])
+            image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c] = (alpha_l * image[offset_y:offset_y+medium_size,
+                                                                                                      offset_x:offset_x+medium_size, c] + alpha_s * s_img[:, :, c])
         except Exception as e:
             print(f"Stamping failed: {e}")
+            print(f"offset: {offset_y}, {offset_x}")  # this way it si the same as numpy shape: (row, colums)
+            print(f"medium_size: {medium_size}")
+            print(f"c: {c}")
+            print(
+                f"shapes: {image.shape}, {alpha_s.shape}, {alpha_l.shape}, {image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c].shape}, {s_img[:, :, c].shape}")
 
 
 def replace_in_image(into_image, from_image, box, shape="rectangle"):
@@ -212,7 +225,7 @@ def main(args):
                 print("Wrong image format.")
                 continue
             print(frame_duration)
-            
+
             gif_frame_files = images_in(tempdir)
             censored_frames = []
             for index, frame_file in enumerate(gif_frame_files):
