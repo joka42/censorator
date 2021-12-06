@@ -195,20 +195,9 @@ def main(args):
             tempdir = tempfile.mkdtemp()
             frame_duration = 40  # defaults to 40, 25 Hz
             if extension.lower() == ".gif":
-                # os.system(f"ffmpeg -i {f} -vsync 0 {os.path.join('out', 'artifacts')}_%d.png")
-                # subprocess.run(["ffmpeg", "-i", f, "-vsync", "0", "out/artifacts%d.png"])
-                # im = Image.open(f)
-                # im.seek(0)
-                # im.save("frame0.png")
-                # out, _ = (ffmpeg.input(f)
-                #           #   .filter('select', f'gte(n,{1})')
-                #           .output('pipe:', format='rawvideo', pix_fmt="rgb24")
-                #           .run(capture_stdout=True)
-                #           )
-                # print(out)
-                # frames = frameextractor.processImage(f)
-                os.system(f"ffmpeg -i {f} -vsync 0 {os.path.join(tempdir, name)}%d.png")
-                # os.system(r"/bin/bash -c ./ffmpegextractor.sh")
+                # ffmpeg seems to have fewer/no artifacts than the frameextractor.py that I found online
+                # it had some black artifacts in a couple of frames that I could not fix
+                os.system(f"ffmpeg -loglevel quiet -i {f} -vsync 0 {os.path.join(tempdir, name)}%d.png")
                 frame_duration = frameextractor.analyseImage(f)['duration']
             elif extension.lower() == ".webp":
                 frames = webp.load_images(f)
@@ -220,7 +209,6 @@ def main(args):
                         break
                 for index, frame in enumerate(frames):
                     frame.save(f'{os.path.join(tempdir, name)}_{index}.png', 'PNG')
-
             else:
                 print("Wrong image format.")
                 continue
