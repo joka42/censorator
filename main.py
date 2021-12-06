@@ -1,5 +1,6 @@
 import argparse
 import os
+import subprocess
 import tempfile
 
 import cv2
@@ -67,9 +68,8 @@ def stamp(image, box):
         try:
             image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c] = (alpha_s * s_img[:, :, c] +
                                                                                       alpha_l * image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c])
-        except Exception:
-            print("Stamping failed:")
-            print(Exception)
+        except Exception as e:
+            print(f"Stamping failed: {e}")
 
 
 def replace_in_image(into_image, from_image, box, shape="rectangle"):
@@ -154,8 +154,10 @@ def main(args):
 
     if args.skip_existing:
         existing_images = [os.path.splitext(os.path.split(image)[1])[0] for image in images_in(out_dir)]
+        original_image_count = len(images)
         images = [image for image in images if os.path.splitext(os.path.split(image)[1])[0] not in existing_images]
-        print("skipping existing")
+
+        print(f"Skipping {len(images)-original_image_count} images that are already processed.")
 
     detector = NudeDetector()
     exposed_parts = ["EXPOSED_ANUS", "EXPOSED_BUTTOCKS", "EXPOSED_BREAST_F", "EXPOSED_GENITALIA_F"]
@@ -180,7 +182,20 @@ def main(args):
             tempdir = tempfile.mkdtemp()
             frame_duration = 40  # defaults to 40, 25 Hz
             if extension.lower() == ".gif":
-                frames = frameextractor.processImage(f)
+                # os.system(f"ffmpeg -i {f} -vsync 0 {os.path.join('out', 'artifacts')}_%d.png")
+                # subprocess.run(["ffmpeg", "-i", f, "-vsync", "0", "out/artifacts%d.png"])
+                # im = Image.open(f)
+                # im.seek(0)
+                # im.save("frame0.png")
+                # out, _ = (ffmpeg.input(f)
+                #           #   .filter('select', f'gte(n,{1})')
+                #           .output('pipe:', format='rawvideo', pix_fmt="rgb24")
+                #           .run(capture_stdout=True)
+                #           )
+                # print(out)
+                # frames = frameextractor.processImage(f)
+                os.system(f"ffmpeg -i {f} -vsync 0 {os.path.join(tempdir, name)}%d.png")
+                # os.system(r"/bin/bash -c ./ffmpegextractor.sh")
                 frame_duration = frameextractor.analyseImage(f)['duration']
             elif extension.lower() == ".webp":
                 frames = webp.load_images(f)
@@ -190,14 +205,14 @@ def main(args):
                     for arr, timestamp_ms in dec.frames():
                         frame_duration = timestamp_ms
                         break
+                for index, frame in enumerate(frames):
+                    frame.save(f'{os.path.join(tempdir, name)}_{index}.png', 'PNG')
+
             else:
                 print("Wrong image format.")
                 continue
             print(frame_duration)
-
-            for index, frame in enumerate(frames):
-                frame.save(f'{os.path.join(tempdir, name)}_{index}.png', 'PNG')
-
+            
             gif_frame_files = images_in(tempdir)
             censored_frames = []
             for index, frame_file in enumerate(gif_frame_files):

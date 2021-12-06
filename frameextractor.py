@@ -52,7 +52,7 @@ def analyseImage(path):
     return results
 
 
-def processImage(path):
+def processImage(path, out_path=None):
     '''
     Iterate the GIF, extracting each frame.
     '''
@@ -67,7 +67,8 @@ def processImage(path):
 
     try:
         while True:
-            print(f"saving {path} ({mode}) frame {i}, {im.size}")
+            print(i)
+            # print(f"saving {path} ({mode}) frame {i}, {im.size}")
 
             '''
             If the GIF uses local colour tables, each frame will have its own palette.
@@ -83,22 +84,24 @@ def processImage(path):
                     frames.append(new_frame)
                     break
 
-            new_frame = Image.new('RGBA', im.size)
-
             '''
             Is this file a "partial"-mode GIF where frames update a region of a different size to the entire image?
             If so, we need to construct the new frame by pasting it on top of the preceding frames.
             '''
             if mode == 'partial':
+                new_frame = Image.new('RGBA', im.size, color=None)
                 new_frame.paste(last_frame)
+                new_frame.paste(im, (0, 0), im.convert('RGBA'))
+            elif mode == "full":
+                new_frame = im
 
-            new_frame.paste(im, (0, 0), im.convert('RGBA'))
-            # new_frame.save('%s-%d.png' % (''.join(os.path.basename(path).split('.')[:-1]), i), 'PNG')
+            if out_path:
+                new_frame.save(os.path.join(out_path, os.path.basename(path).split(".")[:-1][0]) + f'_{i}.png', 'PNG')
 
             i += 1
             last_frame = new_frame
             frames.append(new_frame)
-            im.seek(im.tell() + 1)
+            im.seek(i)
     except EOFError:
         pass
 
@@ -106,7 +109,7 @@ def processImage(path):
 
 
 def main():
-    frames = processImage('testgif/test.gif')
+    frames = processImage('testgif/artifacts.gif', 'out')
     print(len(frames))
 
 
