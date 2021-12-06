@@ -13,6 +13,9 @@ from PIL import Image
 import frameextractor
 
 
+PROGRESS_BAR_WIDTH = 20
+
+
 def pixelize(image, blocks=7):
     # divide the input image into NxN blocks
     pixelized_image = image.copy()
@@ -61,6 +64,12 @@ def stamp(image, box):
     offset_y = min(box[1], box[3]) + int((y_dim-medium_size)/2)
 
     # we don't want the stamp to exceed the image frame, so we have to check if it does
+    # there is probably a small error because of not adjusting the other values. It should generally
+    # be in the single pixel range, so I don't care
+    if offset_x < 0:
+        offset_x = 0
+    if offset_y < 0:
+        offset_y = 0
     if image.shape[0] < offset_y + medium_size:
         medium_size = image.shape[0] - offset_y
     if image.shape[1] < offset_x + medium_size:
@@ -191,8 +200,8 @@ def main(args):
 
         # Animated images
         if extension.lower() == ".gif" or extension.lower() == ".webp":
-            progress_bar = "[░░░░░░░░░░░░░░░░░░░░]"
-            base_string = f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}: "
+            progress_bar = "[" + "░" * PROGRESS_BAR_WIDTH + "]"
+            base_string = f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}: " + "\t"
             print(base_string + progress_bar, end="\r", flush=True)
 
             tempdir = tempfile.mkdtemp()
@@ -227,9 +236,9 @@ def main(args):
                 # Convert image to pil image
                 pil_frame = Image.fromarray(cv2.cvtColor(censored_frame, cv2.COLOR_BGR2RGB))
                 censored_frames.append(pil_frame)
-                progress = int(len(censored_frames)/len(frame_files)*20)
+                progress = int(len(censored_frames)/len(frame_files)*PROGRESS_BAR_WIDTH)
                 progress_bar = "[" + "█" * progress + "░" * \
-                    (20-progress) + "]" + f" (Frame {len(censored_frames)}/{len(frame_files)})"
+                    (PROGRESS_BAR_WIDTH-progress) + "]" + f" (Frame {len(censored_frames)}/{len(frame_files)})"
                 print(base_string + progress_bar, end="\r", flush=True)
 
             censored_frames[0].save(os.path.join(out_dir, f'{name}.webp'), append_images=censored_frames[1:],
