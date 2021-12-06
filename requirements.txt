@@ -1,3 +1,5 @@
 nudenet
 opencv-python-headless
 numpy
+pillow
+webp

@@ -1,10 +1,14 @@
-import os
 import argparse
-
-from nudenet import NudeDetector
+import os
+import tempfile
 
 import cv2
 import numpy as np
+from nudenet import NudeDetector
+from PIL import Image
+import webp
+
+import frameextractor
 
 
 def pixelize(image, blocks=7):
@@ -135,9 +139,9 @@ def images_in(path):
         print("File or directory not found.")
 
     images = [f for f in filenames if f.lower().endswith(
-        ".jpg") or f.lower().endswith(".png") or f.lower().endswith(".jpeg")]
+        ".jpg") or f.lower().endswith(".png") or f.lower().endswith(".jpeg") or f.lower().endswith(".gif") or f.lower().endswith(".webp")]
 
-    print(images)
+    # print(images)
     return images
 
 
@@ -163,16 +167,56 @@ def main(args):
         path, filename = os.path.split(f)
         print(f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}")
         name, extension = os.path.splitext(filename)
-        detection_result = detector.detect(f)
-        image = cv2.imread(f)
-        if image is None:
-            print(f'Processing failed. Image "{filename}" may be corrupted...')
-            processed_images -= 1
+
+        # Animated images
+        if extension.lower() == ".gif" or extension.lower() == ".webp":
+            tempdir = tempfile.mkdtemp()
+            frame_duration = 40  # defaults to 40, 25 Hz
+            if extension.lower() == ".gif":
+                frames = frameextractor.processImage(f)
+                frame_duration = frameextractor.analyseImage(f)['duration']
+            elif extension.lower() == ".webp":
+                frames = webp.load_images(f)
+                with open(f, 'rb') as webp_file:
+                    webp_data = webp.WebPData.from_buffer(webp_file.read())
+                    dec = webp.WebPAnimDecoder.new(webp_data)
+                    for arr, timestamp_ms in dec.frames():
+                        frame_duration = timestamp_ms
+                        break
+            else:
+                print("Wrong image format.")
+                continue
+            print(frame_duration)
+
+            for index, frame in enumerate(frames):
+                frame.save(f'{os.path.join(tempdir, name)}_{index}.png', 'PNG')
+
+            gif_frame_files = images_in(tempdir)
+            censored_frames = []
+            for index, frame_file in enumerate(gif_frame_files):
+                detection_result = detector.detect(frame_file)
+                image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
+                censored_frame = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
+
+                # Convert image to pil image
+                pil_frame = Image.fromarray(cv2.cvtColor(censored_frame, cv2.COLOR_BGR2RGB))
+                censored_frames.append(pil_frame)
+
+            censored_frames[0].save(os.path.join(out_dir, f'{name}.webp'), append_images=censored_frames[1:],
+                                    save_all=True, optimize=False, duration=frame_duration, loop=0)
             continue
-        censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
-        censored_file_name = filename
-        out_path = out_dir + censored_file_name
-        cv2.imwrite(out_path, censored_image)
+        # Image is not animated
+        else:
+            detection_result = detector.detect(f)
+            image = cv2.imread(f)
+            if image is None:
+                print(f'Processing failed. Image "{filename}" may be corrupted...')
+                processed_images -= 1
+                continue
+            censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
+            censored_file_name = filename
+            out_path = os.path.join(out_dir, censored_file_name)
+            cv2.imwrite(out_path, censored_image)
     print(f"[ 100% ]  Processed {processed_images} of {len(images)}. Failed: {len(images) - processed_images}.")
 
 
