@@ -97,7 +97,6 @@ def stamp(image, box):
 def replace_in_image(into_image, from_image, box, shape="rectangle"):
     """
     box: [x_min, y_min, x_max, y_max]
-
     """
     if shape == "circle":
         # calculate average radius
@@ -167,6 +166,27 @@ def images_in(path):
     return images
 
 
+def calculate_centeroid(box):
+    return [int((box[2] - box[0])/2.0), int(box[3] - box[1]/2.0)]
+
+
+def filter_results(detection_results, results_of_interest):
+    """
+    box: [x_min, y_min, x_max, y_max]
+    """
+    filtered = []
+    centeroids = []
+    for result in detection_results:
+        single_list = [obj for obj in result if obj.get("label") in results_of_interest]
+        centeroids.append([{"label": obj.get("label"), "center": calculate_centeroid(obj.get("box"))}
+                          for obj in single_list])
+        filtered.append(single_list)
+
+    print(filtered)
+    print(centeroids)
+    return filtered
+
+
 def main(args):
     images = images_in(args.input)
 
@@ -227,23 +247,30 @@ def main(args):
 
             frame_files = images_in(tempdir)
             censored_frames = []
+            detection_results = []
 
+            # detect
             for index, frame_file in enumerate(frame_files):
                 detection_result = detector.detect(frame_file)
+                detection_results.append(detection_result)
+                progress = int(len(detection_results)/len(frame_files)*PROGRESS_BAR_WIDTH)
+                progress_bar = "[" + "█" * progress + "░" * \
+                    (PROGRESS_BAR_WIDTH-progress) + "]" + f" (Frame {len(detection_results)}/{len(frame_files)})"
+                print(base_string + progress_bar, end="\r", flush=True)
+
+            detection_results = filter_results(detection_results, to_blur)
+
+            for frame_file, detection_result in zip(frame_files, detection_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
                 censored_frame = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
 
                 # Convert image to pil image
                 pil_frame = Image.fromarray(cv2.cvtColor(censored_frame, cv2.COLOR_BGR2RGB))
                 censored_frames.append(pil_frame)
-                progress = int(len(censored_frames)/len(frame_files)*PROGRESS_BAR_WIDTH)
-                progress_bar = "[" + "█" * progress + "░" * \
-                    (PROGRESS_BAR_WIDTH-progress) + "]" + f" (Frame {len(censored_frames)}/{len(frame_files)})"
-                print(base_string + progress_bar, end="\r", flush=True)
 
             censored_frames[0].save(os.path.join(out_dir, f'{name}.webp'), append_images=censored_frames[1:],
                                     save_all=True, optimize=False, duration=frame_duration, loop=0)
-            print("")
+            print("")  # go to next line
             continue
         # Image is not animated
         else:
