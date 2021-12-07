@@ -6,9 +6,11 @@ import tempfile
 import webp
 
 import cv2
+from filterpy.kalman import KalmanFilter
 import numpy as np
 from nudenet import NudeDetector
 from PIL import Image
+
 
 import frameextractor
 
@@ -181,9 +183,14 @@ def filter_results(detection_results, results_of_interest):
         centeroids.append([{"label": obj.get("label"), "center": calculate_centeroid(obj.get("box"))}
                           for obj in single_list])
         filtered.append(single_list)
-
+    # https://pypi.org/project/filterpy/
+    # kf = KalmanFilter(dim_x=2, dim_z=1)
     print(filtered)
     print(centeroids)
+    # split the objects by similarity
+
+    # kalman filter for tracking
+
     return filtered
 
 
