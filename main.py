@@ -1,19 +1,16 @@
+#!/bin/python3
+
 import argparse
 import logging
 import math
 import os
-import subprocess
 import tempfile
-import webp
 
 import cv2
-from filterpy.kalman import KalmanFilter
-import numpy as np
 from nudenet import NudeDetector
+import numpy as np
 from PIL import Image
-
-
-import frameextractor
+import webp
 
 
 PROGRESS_BAR_WIDTH = 20
@@ -98,6 +95,33 @@ def stamp(image, box):
         image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, color] = \
             (alpha_l * image[offset_y:offset_y+medium_size, offset_x:offset_x +
              medium_size, color] + alpha_s * s_img[:, :, color])
+
+
+def analyzeImage(path):
+    '''
+    Pre-process pass over the image to determine the mode (full or additive).
+    Necessary as assessing single frames isn't reliable. Need to know the mode
+    before processing all frames.
+    '''
+    im = Image.open(path)
+    results = {
+        'size': im.size,
+        'mode': 'full',
+        'duration': im.info['duration'] if "duration" in im.info.keys() else 40
+    }
+    try:
+        while True:
+            if im.tile:
+                tile = im.tile[0]
+                update_region = tile[1]
+                update_region_dimensions = update_region[2:]
+                if update_region_dimensions != im.size:
+                    results['mode'] = 'partial'
+                    break
+            im.seek(im.tell() + 1)
+    except EOFError:
+        pass
+    return results
 
 
 def replace_in_image(into_image, from_image, box, shape="rectangle"):
@@ -194,11 +218,8 @@ def update_box(centeroid, box):
     box_center = calculate_centeroid(box)
     diff_x = int(centeroid[0] - box_center[0])
     diff_y = int(centeroid[1] - box_center[1])
-    box[0] += diff_x
-    box[2] += diff_x
-    box[1] += diff_y
-    box[3] += diff_y
-    return box
+    new_box = [box[0] + diff_x, box[1] + diff_y, box[2] + diff_x, box[3] + diff_y]
+    return new_box
 
 
 def centeroid_from(detection_result):
@@ -236,7 +257,7 @@ def filter_results(detection_results, results_of_interest):
                   [0, 0, 0, 0, d, 0],
                   [0, 0, 0, 0, 0, 1]
                   ])
-    #A = np.ndarray(shape=(6, 6), buffer=A, dtype=float)
+    # A = np.ndarray(shape=(6, 6), buffer=A, dtype=float)
     # ========================
     # Data extraction
     # TODO: calculate velocity and add it to the vector
@@ -258,11 +279,16 @@ def filter_results(detection_results, results_of_interest):
 
     # we start predicting from the first measurement and filter the following measurement
     # so the last frame can be skipped, because a new prediction is not necessary
-    for frame, frame_result in enumerate(filtered[:-1]):
+    for frame, _ in enumerate(filtered[:-1]):
         logging.debug("Frame: %s", frame + 1)
-        for result in frame_result:
+
+        for result_index, result in enumerate(filtered[frame]):
             # calculate prediction
-            logging.debug(str(result))
+            for index, result in enumerate(filtered[frame]):
+                logging.debug("Before: Current - Index %s: %s", index, result)
+            for index, result in enumerate(filtered[frame + 1]):
+                logging.debug("Before: Next - Index %s: %s", index, result)
+            # logging.debug("Before: Result Index %s: %s", result_index, frame_result)
             x = result.get("centeroid")
             x_pred = A.dot(x)
 
@@ -288,7 +314,10 @@ def filter_results(detection_results, results_of_interest):
                 x_comb = update(x_pred, x_meas)
                 filtered[frame + 1][match]["centeroid"] = x_comb
                 filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
-                logging.debug("Match: %s", filtered[frame + 1][match])
+                for index, result in enumerate(filtered[frame]):
+                    logging.debug("Current - Index %s: %s", index, result)
+                for index, result in enumerate(filtered[frame + 1]):
+                    logging.debug("Next - Index %s: %s", index, result)
                 continue
 
             # if the prediction is too old do not continue to track it
@@ -298,9 +327,9 @@ def filter_results(detection_results, results_of_interest):
 
             # if there is no match found, use prediction only
             logging.debug("Add prediction result")
-            filtered[frame + 1].append(filtered[frame][match])
-            filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
-            filtered[frame + 1][match]["centeroid"] = x_pred
+            filtered[frame + 1].append(result)
+            filtered[frame + 1][-1]["box"] = update_box(x_pred, filtered[frame + 1][-1].get("box"))
+            filtered[frame + 1][-1]["centeroid"] = x_pred
 
     return filtered
 
@@ -335,8 +364,8 @@ def main(args):
 
     processed_images = len(images)
 
-    for index, f in enumerate(images):
-        _, filename = os.path.split(f)
+    for index, file in enumerate(images):
+        _, filename = os.path.split(file)
         name, extension = os.path.splitext(filename)
 
         # Animated images
@@ -350,14 +379,15 @@ def main(args):
             if extension.lower() == ".gif":
                 # ffmpeg seems to have fewer/no artifacts than the frameextractor.py that I found online
                 # it had some black artifacts in a couple of frames that I could not fix
-                os.system(f"ffmpeg -loglevel quiet -i {f} -vsync 0 {os.path.join(tempdir, name)}%d.png")
-                frame_duration = frameextractor.analyseImage(f)['duration']
+                ffmpeg_loglevel = "-loglevel quiet" if not args.debug else ""
+                os.system(f"ffmpeg {ffmpeg_loglevel} -i {file} -vsync 0 {os.path.join(tempdir, name)}%d.png")
+                frame_duration = analyzeImage(file)['duration']
             elif extension.lower() == ".webp":
-                frames = webp.load_images(f)
-                with open(f, 'rb') as webp_file:
+                frames = webp.load_images(file)
+                with open(file, 'rb') as webp_file:
                     webp_data = webp.WebPData.from_buffer(webp_file.read())
                     dec = webp.WebPAnimDecoder.new(webp_data)
-                    for arr, timestamp_ms in dec.frames():
+                    for _, timestamp_ms in dec.frames():
                         frame_duration = timestamp_ms
                         break
                 for frame_index, frame in enumerate(frames):
@@ -375,9 +405,9 @@ def main(args):
                 detection_result = detector.detect(frame_file)
                 detection_results.append(detection_result)
                 progress = int(len(detection_results)/len(frame_files)*PROGRESS_BAR_WIDTH)
-                progress_bar = "[" + "█" * progress + "░" * \
-                    (PROGRESS_BAR_WIDTH-progress) + "]" + f" (Frame {len(detection_results)}/{len(frame_files)})"
-                print(base_string + progress_bar, end="\r", flush=True)
+                progress_bar = "[" + "█" * progress + "░" * (PROGRESS_BAR_WIDTH-progress) + "]"
+                frame_counter = f" (Frame {len(detection_results)}/{len(frame_files)})"
+                print(base_string + progress_bar + frame_counter, end="\r", flush=True)
             print("")  # go to next line
 
             if args.filter:
@@ -403,8 +433,8 @@ def main(args):
         else:
             print(f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}")
 
-            detection_result = detector.detect(f)
-            image = cv2.imread(f)
+            detection_result = detector.detect(file)
+            image = cv2.imread(file)
             if image is None:
                 print(f'Processing failed. Image "{filename}" may be corrupted...')
                 processed_images -= 1
