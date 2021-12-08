@@ -269,18 +269,14 @@ def filter_results(detection_results, results_of_interest):
             if match < 0:
                 # if the prediction is too old do not continue to track it
                 if x_pred[4] < visbility_threshold:
-                    print(f"Visibility below threshold: {x_pred[4]}")
                     continue
                 centeroids[frame + 1].append(x_pred)
 
                 filtered[frame + 1].append(filtered[frame][match])
                 filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
-
-                print("added centeriod")
                 continue
 
             # combine the measurement and the prediction
-            print("updated pred and meas")
             x_comb = update(x_pred, centeroids[frame + 1][match])
             centeroids[frame + 1][match] = x_comb
 
