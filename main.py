@@ -1,4 +1,5 @@
 import argparse
+import logging
 import math
 import os
 import subprocess
@@ -17,6 +18,15 @@ import frameextractor
 
 PROGRESS_BAR_WIDTH = 20
 INFINITY = 9223372036854775807
+
+# bodyParts: "enum" so they can be stored in the np.ndarray
+BodyPart = {"EXPOSED_ANUS": 0,
+            "EXPOSED_BUTTOCKS": 1,
+            "EXPOSED_BREAST_F": 2,
+            "EXPOSED_GENITALIA_F": 3,
+            "COVERED_BUTTOCKS": 4,
+            "COVERED_BREAST_F": 5,
+            "COVERED_GENITALIA_F": 6}
 
 
 def pixelize(image, blocks=7):
@@ -84,17 +94,10 @@ def stamp(image, box):
     # get a matrix with alpha values between 0 and 1 from the orinal image with alpha-channel 3
     alpha_s = s_img[:, :, 3] / 255.0
     alpha_l = 1.0 - alpha_s
-    for c in range(0, 3):
-        try:
-            image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c] = (alpha_l * image[offset_y:offset_y+medium_size,
-                                                                                                      offset_x:offset_x+medium_size, c] + alpha_s * s_img[:, :, c])
-        except Exception as e:
-            print(f"Stamping failed: {e}")
-            print(f"offset: {offset_y}, {offset_x}")  # this way it si the same as numpy shape: (row, colums)
-            print(f"medium_size: {medium_size}")
-            print(f"c: {c}")
-            print(
-                f"shapes: {image.shape}, {alpha_s.shape}, {alpha_l.shape}, {image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, c].shape}, {s_img[:, :, c].shape}")
+    for color in range(0, 3):
+        image[offset_y:offset_y+medium_size, offset_x:offset_x+medium_size, color] = \
+            (alpha_l * image[offset_y:offset_y+medium_size, offset_x:offset_x +
+             medium_size, color] + alpha_s * s_img[:, :, color])
 
 
 def replace_in_image(into_image, from_image, box, shape="rectangle"):
@@ -154,9 +157,9 @@ def images_in(path):
     if os.path.isdir(path):
         # print("Filenames: ")
         filenames = []
-        for root, dirs, files in os.walk(path):
-            for f in files:
-                filenames.append(os.path.abspath(os.path.join(path, f)))
+        for _, _, files in os.walk(path):
+            for file in files:
+                filenames.append(os.path.abspath(os.path.join(path, file)))
     elif os.path.isfile(path):
         filenames.append(path)
     else:
@@ -179,6 +182,7 @@ def check_similarity(x_1, x_2):
     MAX_DISTANCE = 50  # pixel
     dist_x = abs(int(x_1[0] - x_2[0]))
     dist_y = abs(int(x_1[1] - x_2[1]))
+    logging.debug("similarity check: class diff: %s", abs(x_1[5] - x_2[5]))
     return abs(x_1[5] - x_2[5]) < 0.5 and dist_x < MAX_DISTANCE and dist_y < MAX_DISTANCE, dist_x + dist_y
 
 
@@ -197,6 +201,15 @@ def update_box(centeroid, box):
     return box
 
 
+def centeroid_from(detection_result):
+    center = calculate_centeroid(detection_result.get("box"))
+    classification = BodyPart.get(detection_result.get("label"))
+    # all classifications must, by design, be in the dict!
+    assert classification is not None
+    x = np.array([center[0], center[1], 0, 0, 1, classification])
+    return x
+
+
 def filter_results(detection_results, results_of_interest):
     # other ideas
     # https://pypi.org/project/filterpy/
@@ -212,18 +225,9 @@ def filter_results(detection_results, results_of_interest):
     # d : visibility decline per frame
     d = 0.8
     # visbility_threshold : threshold when an object is removed
-    visbility_threshold = 0.4
+    visibility_threshold = 0.4
     # t : time in frame is set to 1, because it does not change and units don't matter
     t = 1
-    # bodyParts: "enum" so they can be stored in the np.ndarray
-    bodyPart = {"EXPOSED_ANUS": 0,
-                "EXPOSED_BUTTOCKS": 1,
-                "EXPOSED_BREAST_F": 2,
-                "EXPOSED_GENITALIA_F": 3,
-                "COVERED_BUTTOCKS": 4,
-                "COVERED_BREAST_F": 5,
-                "COVERED_GENITALIA_F": 6}
-
     # A : prediction matrix
     A = np.array([[1, 0, t, 0, 0, 0],
                   [0, 1, 0, t, 0, 0],
@@ -237,73 +241,70 @@ def filter_results(detection_results, results_of_interest):
     # Data extraction
     # TODO: calculate velocity and add it to the vector
     filtered = []
-    centeroids = []
-    for result in detection_results:
-        single_list = [obj for obj in result if obj.get("label") in results_of_interest]
-        filtered.append(single_list)
 
-        # calculate the center points and add all info to a vector
-        centeroids_in_result = []
-        # use the filtered results, so we do not track objects that are not of interest
-        for obj in single_list:
-            center = calculate_centeroid(obj.get("box"))
-            classification = bodyPart.get(obj.get("label"))
-            # all classifications should be in the dict!
-            assert classification != None
-            x = np.array([center[0], center[1], 0, 0, 1, classification])
-            centeroids_in_result.append(x)
-        centeroids.append(centeroids_in_result)
+    for frame_results in detection_results:
+        filtered_frame_results = [detection_result for detection_result in frame_results
+                                  if detection_result.get("label") in results_of_interest]
+        filtered.append(filtered_frame_results)
 
-    assert len(centeroids) == len(filtered)
-    total_frames = len(centeroids)
+    for frame_result in filtered:
+        for item in frame_result:
+            item['centeroid'] = centeroid_from(item)
 
-    print([len(x) for x in filtered])
+    logging.debug(str([len(x) for x in filtered]))
 
     # we start predicting from the first measurement and filter the following measurement
     # so the last frame can be skipped, because a new prediction is not necessary
-    for frame in range(total_frames - 1):
-        for x in centeroids[frame]:
+    for frame, frame_result in enumerate(filtered[:-1]):
+        logging.debug("Frame: %s", frame + 1)
+        for result in frame_result:
             # calculate prediction
+            x = result.get("centeroid")
             x_pred = A.dot(x)
 
             min_similarity = math.inf
             match = -1
-            for index, x_meas in enumerate(centeroids[frame + 1]):
+            for index, next_frame_results in enumerate(filtered[frame + 1]):
+                x_meas = next_frame_results.get("centeroid")
                 is_similar, similarity = check_similarity(x_pred, x_meas)
                 # check if possible match
                 if not is_similar:
-                    print("not similar")
+                    logging.debug("not similar")
                     continue
                 # find closest match
                 if similarity < min_similarity:
                     min_similarity = similarity
                     match = index
 
-            print(f"match: {match}")
-
-            # if there is no match found, use prediction only
-            if match < 0:
-                # if the prediction is too old do not continue to track it
-                if x_pred[4] < visbility_threshold:
-                    continue
-                centeroids[frame + 1].append(x_pred)
-                print("add")
-                filtered[frame + 1].append(filtered[frame][match])
-                filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
+            # combine the measurement and the prediction
+            if match >= 0:
+                logging.debug("Comb: Match %s", match)
+                x_meas = filtered[frame + 1][match].get("centeroid")
+                x_comb = update(x_pred, x_meas)
+                filtered[frame + 1][match]["centeroid"] = x_comb
+                filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
                 continue
 
-            # combine the measurement and the prediction
-            x_comb = update(x_pred, centeroids[frame + 1][match])
-            centeroids[frame + 1][match] = x_comb
-            filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
-            print(f"comb {len(filtered[frame + 1])} {len(filtered[frame])}")
+            # if the prediction is too old do not continue to track it
+            if x_pred[4] < visibility_threshold:
+                logging.debug("Skipping, low visibility")
+                continue
 
-    print([len(x) for x in filtered])
+            # if there is no match found, use prediction only
+            logging.debug("add new")
+            filtered[frame + 1].append(filtered[frame][match])
+            filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
+            filtered[frame + 1][match]["centeroid"] = x_pred
 
-    return filtered, centeroids
+    logging.debug(str([len(x) for x in filtered]))
+
+    return filtered
 
 
 def main(args):
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+
     images = images_in(args.input)
 
     out_dir = args.output if args.output else "./"
@@ -331,7 +332,7 @@ def main(args):
     processed_images = len(images)
 
     for index, f in enumerate(images):
-        path, filename = os.path.split(f)
+        _, filename = os.path.split(f)
         name, extension = os.path.splitext(filename)
 
         # Animated images
@@ -355,8 +356,8 @@ def main(args):
                     for arr, timestamp_ms in dec.frames():
                         frame_duration = timestamp_ms
                         break
-                for index, frame in enumerate(frames):
-                    frame.save(f'{os.path.join(tempdir, name)}_{index}.png', 'PNG')
+                for frame_index, frame in enumerate(frames):
+                    frame.save(f'{os.path.join(tempdir, name)}_{frame_index}.png', 'PNG')
             else:
                 print("Wrong image format.")
                 continue
@@ -366,7 +367,7 @@ def main(args):
             detection_results = []
 
             # detect
-            for index, frame_file in enumerate(frame_files):
+            for frame_file in frame_files:
                 detection_result = detector.detect(frame_file)
                 detection_results.append(detection_result)
                 progress = int(len(detection_results)/len(frame_files)*PROGRESS_BAR_WIDTH)
@@ -375,14 +376,18 @@ def main(args):
                 print(base_string + progress_bar, end="\r", flush=True)
             print("")  # go to next line
 
-            detection_results, center_results = filter_results(detection_results, to_blur)
-            for frame_file, detection_result, centeroids in zip(frame_files, detection_results, center_results):
-                image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
-                censored_frame = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
+            if args.filter:
+                detection_results = filter_results(detection_results, to_blur)
 
-                # for center in centeroids:
-                #     censored_frame = cv2.circle(censored_frame, (int(center[0]), int(center[1])), radius=5,
-                #                                 color=(0, 0, 255), thickness=-1)
+            for frame_file, frame_result in zip(frame_files, detection_results):
+                image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
+                censored_frame = censor(image, boxes=frame_result, parts_to_blur=to_blur, with_stamp=args.stamped)
+
+                if args.debug:
+                    for result in frame_result:
+                        center = result.get("centeroid")
+                        censored_frame = cv2.circle(censored_frame, (int(center[0]), int(center[1])), radius=5,
+                                                    color=(0, 0, 255), thickness=-1)
                 # Convert image to pil image
                 pil_frame = Image.fromarray(cv2.cvtColor(censored_frame, cv2.COLOR_BGR2RGB))
                 censored_frames.append(pil_frame)
@@ -390,7 +395,6 @@ def main(args):
             censored_frames[0].save(os.path.join(out_dir, f'{name}.webp'), append_images=censored_frames[1:],
                                     save_all=True, optimize=False, duration=frame_duration, loop=0)
 
-            continue
         # Image is not animated
         else:
             print(f"[ {str(int(index/len(images)*100)).rjust(3)}% ]  Processing file ({str(index + 1)}/{str(len(images))}) {filename}")
@@ -416,6 +420,8 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--casual', action="store_true", default=False)
     parser.add_argument('--stamped', action="store_true", default=False)
     parser.add_argument('--skip_existing', action="store_true", default=False)
+    parser.add_argument('--filter', action="store_true", default=False)
+    parser.add_argument('--debug', action="store_true", default=False)
     args = parser.parse_args()
     print(args)
     main(args)
