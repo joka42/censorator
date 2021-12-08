@@ -247,9 +247,12 @@ def filter_results(detection_results, results_of_interest):
                                   if detection_result.get("label") in results_of_interest]
         filtered.append(filtered_frame_results)
 
+    # for frame, frame_result in enumerate(filtered):
+    #     for index, result in enumerate(frame_result):
+    #         filtered[frame][index]['centeroid'] = centeroid_from(result)
     for frame_result in filtered:
-        for item in frame_result:
-            item['centeroid'] = centeroid_from(item)
+        for result in frame_result:
+            result['centeroid'] = centeroid_from(result)
 
     logging.debug(str([len(x) for x in filtered]))
 
@@ -259,6 +262,7 @@ def filter_results(detection_results, results_of_interest):
         logging.debug("Frame: %s", frame + 1)
         for result in frame_result:
             # calculate prediction
+            logging.debug(str(result))
             x = result.get("centeroid")
             x_pred = A.dot(x)
 
@@ -279,10 +283,12 @@ def filter_results(detection_results, results_of_interest):
             # combine the measurement and the prediction
             if match >= 0:
                 logging.debug("Comb: Match %s", match)
+                logging.debug("Match: %s", filtered[frame + 1][match])
                 x_meas = filtered[frame + 1][match].get("centeroid")
                 x_comb = update(x_pred, x_meas)
                 filtered[frame + 1][match]["centeroid"] = x_comb
                 filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
+                logging.debug("Match: %s", filtered[frame + 1][match])
                 continue
 
             # if the prediction is too old do not continue to track it
@@ -291,12 +297,10 @@ def filter_results(detection_results, results_of_interest):
                 continue
 
             # if there is no match found, use prediction only
-            logging.debug("add new")
+            logging.debug("Add prediction result")
             filtered[frame + 1].append(filtered[frame][match])
             filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
             filtered[frame + 1][match]["centeroid"] = x_pred
-
-    logging.debug(str([len(x) for x in filtered]))
 
     return filtered
 
@@ -383,7 +387,7 @@ def main(args):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
                 censored_frame = censor(image, boxes=frame_result, parts_to_blur=to_blur, with_stamp=args.stamped)
 
-                if args.debug:
+                if args.debug and args.filter:
                     for result in frame_result:
                         center = result.get("centeroid")
                         censored_frame = cv2.circle(censored_frame, (int(center[0]), int(center[1])), radius=5,
