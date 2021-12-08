@@ -16,6 +16,7 @@ import frameextractor
 
 
 PROGRESS_BAR_WIDTH = 20
+INFINITY = 9223372036854775807
 
 
 def pixelize(image, blocks=7):
@@ -169,29 +170,136 @@ def images_in(path):
 
 
 def calculate_centeroid(box):
-    return [int((box[2] - box[0])/2.0), int(box[3] - box[1]/2.0)]
+    # box: [x_min, y_min, x_max, y_max]
+    # return [x_center, y_center]
+    return [int((box[2] + box[0])/2.0), int((box[3] + box[1])/2.0)]
+
+
+def check_similarity(x_1, x_2):
+    MAX_DISTANCE = 50  # pixel
+    dist_x = abs(x_1.item(0) - x_2.item(0))
+    dist_y = abs(x_1.item(1) - x_2.item(1))
+    return x_1.item(5) == x_2.item(5) and dist_x < MAX_DISTANCE and dist_y < MAX_DISTANCE, dist_x + dist_y
+
+
+def update(x_pred, x_meas):
+    return x_meas * 0.7 + x_pred * 0.3
 
 
 def filter_results(detection_results, results_of_interest):
+    # other ideas
+    # https://pypi.org/project/filterpy/
+    # kf = KalmanFilter(dim_x=2, dim_z=1)
+    # split the objects by similarity
+    # kalman filter for tracking
     """
     box: [x_min, y_min, x_max, y_max]
     """
+    # ====== Parameters ======
+    # a : acceleration
+    a = 0.3  # we assume, that the center movement declines
+    # d : visibility decline per frame
+    d = 1
+    # visbility_threshold : threshold when an object is removed
+    visbility_threshold = 0.4
+    # t : time in frame is set to 1, because it does not change and units don't matter
+    t = 1
+    # bodyParts: "enum" so they can be stored in the np.ndarray
+    bodyPart = {"EXPOSED_ANUS": 0,
+                "EXPOSED_BUTTOCKS": 1,
+                "EXPOSED_BREAST_F": 2,
+                "EXPOSED_GENITALIA_F": 3,
+                "COVERED_BUTTOCKS": 4,
+                "COVERED_BREAST_F": 5,
+                "COVERED_GENITALIA_F": 6}
+
+    # A : prediction matrix
+    A = np.array([[1, 0, t, 0, 0, 0],
+                  [0, 1, 0, t, 0, 0],
+                  [0, 0, a, 0, 0, 0],
+                  [0, 0, 0, a, 0, 0],
+                  [0, 0, 0, 0, d, 0],
+                  [0, 0, 0, 0, 0, 1]
+                  ])
+    #A = np.ndarray(shape=(6, 6), buffer=A, dtype=float)
+    # ========================
+    # Data extraction
+    # TODO: calculate velocity and add it to the vector
     filtered = []
     centeroids = []
     for result in detection_results:
         single_list = [obj for obj in result if obj.get("label") in results_of_interest]
-        centeroids.append([{"label": obj.get("label"), "center": calculate_centeroid(obj.get("box"))}
-                          for obj in single_list])
         filtered.append(single_list)
-    # https://pypi.org/project/filterpy/
-    # kf = KalmanFilter(dim_x=2, dim_z=1)
-    print(filtered)
-    print(centeroids)
-    # split the objects by similarity
 
-    # kalman filter for tracking
+        # calculate the center points and add all info to a vector
+        centeroids_in_result = []
+        # use the filtered results, so we do not track objects that are not of interest
+        for obj in single_list:
+            center = calculate_centeroid(obj.get("box"))
+            classification = bodyPart.get(obj.get("label"))
+            # all classifications should be in the dict!
+            assert classification != None
+            x = np.array([center[0], center[1], 0, 0, 1, classification])
+            centeroids_in_result.append(x)
+        centeroids.append(centeroids_in_result)
 
-    return filtered
+    assert len(centeroids) == len(filtered)
+    total_frames = len(centeroids)
+
+    # we start predicting from the first measurement and filter the following measurement
+    # so the last frame can be skipped, because a new prediction is not necessary
+    for frame in range(total_frames - 1):
+        for x in centeroids[frame]:
+            # calculate prediction
+            x_pred = A.dot(x)
+
+            min_similarity = math.inf
+            match = -1
+            for index, x_meas in enumerate(centeroids[frame + 1]):
+                is_similar, similarity = check_similarity(x_pred, x_meas)
+                # check if possible match
+                if not is_similar:
+                    continue
+                # find closest match
+                if similarity < min_similarity:
+                    min_similarity = similarity
+                    match = index
+
+            # if there is no match found, use prediction only
+            if match < 0:
+                # if the prediction is too old do not continue to track it
+                if x_pred[4] < visbility_threshold:
+                    print(f"Visibility below threshold: {x_pred[4]}")
+                    continue
+                centeroids[frame + 1].append(x_pred)
+
+                filtered[frame + 1].append(filtered[frame][match])
+                filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
+
+                print("added centeriod")
+                continue
+
+            # combine the measurement and the prediction
+            print("updated pred and meas")
+            x_comb = update(x_pred, centeroids[frame + 1][match])
+            centeroids[frame + 1][match] = x_comb
+
+            filtered[frame + 1].append(filtered[frame][match])
+            filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
+
+    return filtered, centeroids
+
+
+def update_box(centeroid, box):
+    new_box = box
+    box_center = calculate_centeroid(box)
+    diff_x = int(centeroid[0] - box_center[0])
+    diff_y = int(centeroid[1] - box_center[1])
+    new_box[0] += diff_x
+    new_box[2] += diff_x
+    new_box[1] += diff_y
+    new_box[3] += diff_y
+    return new_box
 
 
 def main(args):
@@ -265,12 +373,15 @@ def main(args):
                     (PROGRESS_BAR_WIDTH-progress) + "]" + f" (Frame {len(detection_results)}/{len(frame_files)})"
                 print(base_string + progress_bar, end="\r", flush=True)
 
-            detection_results = filter_results(detection_results, to_blur)
-
-            for frame_file, detection_result in zip(frame_files, detection_results):
+            detection_results, center_results = filter_results(detection_results, to_blur)
+            for frame_file, detection_result, centeroids in zip(frame_files, detection_results, center_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
+
                 censored_frame = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
 
+                # for center in centeroids:
+                #     censored_frame = cv2.circle(censored_frame, (int(center[0]), int(center[1])), radius=5,
+                #                                 color=(0, 0, 255), thickness=-1)
                 # Convert image to pil image
                 pil_frame = Image.fromarray(cv2.cvtColor(censored_frame, cv2.COLOR_BGR2RGB))
                 censored_frames.append(pil_frame)
