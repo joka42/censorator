@@ -4,6 +4,7 @@ testvid/
 testgif/
 resources/models/
 test.py
+vsenv/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

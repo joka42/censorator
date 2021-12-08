@@ -107,7 +107,7 @@ def analyzeImage(path):
     results = {
         'size': im.size,
         'mode': 'full',
-        'duration': im.info['duration'] if "duration" in im.info.keys() else 40
+        'duration': im.info['duration'] if "duration" in im.info.keys() and im.info.get("duration") > 0 else 80,
     }
     try:
         while True:
@@ -381,7 +381,10 @@ def main(args):
                 # it had some black artifacts in a couple of frames that I could not fix
                 ffmpeg_loglevel = "-loglevel quiet" if not args.debug else ""
                 os.system(f"ffmpeg {ffmpeg_loglevel} -i {file} -vsync 0 {os.path.join(tempdir, name)}%d.png")
-                frame_duration = analyzeImage(file)['duration']
+                analysis_result = analyzeImage(file)
+                frame_duration = analysis_result.get('duration')
+                logging.debug("Analysis: %s", analysis_result)
+                logging.debug("Frame duration: %s", frame_duration)
             elif extension.lower() == ".webp":
                 frames = webp.load_images(file)
                 with open(file, 'rb') as webp_file:
@@ -443,6 +446,7 @@ def main(args):
             censored_file_name = filename
             out_path = os.path.join(out_dir, censored_file_name)
             cv2.imwrite(out_path, censored_image)
+
     print(f"[ 100% ]  Processed {processed_images} of {len(images)}. Failed: {len(images) - processed_images}.")
 
 
