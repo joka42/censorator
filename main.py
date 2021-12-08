@@ -167,6 +167,8 @@ def censor(image, boxes, parts_to_blur=[], with_stamp=False):
 
     for item in boxes:
         box = item["box"]
+        if item.get("label") == "EXPOSED_BREAST_F":
+            box = resize_box(box, 0.9)
         replace_in_image(censored_image, pixelized_image, box,
                          "circle" if item["label"] == "EXPOSED_GENITALIA_F" else "rectangle")
         if with_stamp:
@@ -231,6 +233,17 @@ def centeroid_from(detection_result):
     return x
 
 
+def resize_box(box, factor):
+    # box: [x_min, y_min, x_max, y_max]
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    diff_width = (1-factor) * width
+    diff_height = (1-factor) * height
+    new_box = [int(box[0] + diff_width/2), int(box[1] + diff_height/2),
+               int(box[2] - diff_width/2), int(box[3] - diff_height/2)]
+    return new_box
+
+
 def filter_results(detection_results, results_of_interest):
     # other ideas
     # https://pypi.org/project/filterpy/
@@ -244,7 +257,7 @@ def filter_results(detection_results, results_of_interest):
     # a : acceleration
     a = 0.3  # we assume, that the center movement declines
     # d : visibility decline per frame
-    d = 0.8
+    d = 0.9
     # visbility_threshold : threshold when an object is removed
     visibility_threshold = 0.4
     # t : time in frame is set to 1, because it does not change and units don't matter
@@ -282,12 +295,12 @@ def filter_results(detection_results, results_of_interest):
     for frame, _ in enumerate(filtered[:-1]):
         logging.debug("Frame: %s", frame + 1)
 
-        for result_index, result in enumerate(filtered[frame]):
+        for result in filtered[frame]:
             # calculate prediction
-            for index, result in enumerate(filtered[frame]):
-                logging.debug("Before: Current - Index %s: %s", index, result)
-            for index, result in enumerate(filtered[frame + 1]):
-                logging.debug("Before: Next - Index %s: %s", index, result)
+            for index, print_result in enumerate(filtered[frame]):
+                logging.debug("Before: Current - Index %s: %s", index, print_result)
+            for index, print_result in enumerate(filtered[frame + 1]):
+                logging.debug("Before: Next - Index %s: %s", index, print_result)
             # logging.debug("Before: Result Index %s: %s", result_index, frame_result)
             x = result.get("centeroid")
             x_pred = A.dot(x)
@@ -314,10 +327,10 @@ def filter_results(detection_results, results_of_interest):
                 x_comb = update(x_pred, x_meas)
                 filtered[frame + 1][match]["centeroid"] = x_comb
                 filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
-                for index, result in enumerate(filtered[frame]):
-                    logging.debug("Current - Index %s: %s", index, result)
-                for index, result in enumerate(filtered[frame + 1]):
-                    logging.debug("Next - Index %s: %s", index, result)
+                for index, print_result in enumerate(filtered[frame]):
+                    logging.debug("Current - Index %s: %s", index, print_result)
+                for index, print_result in enumerate(filtered[frame + 1]):
+                    logging.debug("Next - Index %s: %s", index, print_result)
                 continue
 
             # if the prediction is too old do not continue to track it
