@@ -177,13 +177,24 @@ def calculate_centeroid(box):
 
 def check_similarity(x_1, x_2):
     MAX_DISTANCE = 50  # pixel
-    dist_x = abs(x_1.item(0) - x_2.item(0))
-    dist_y = abs(x_1.item(1) - x_2.item(1))
-    return x_1.item(5) == x_2.item(5) and dist_x < MAX_DISTANCE and dist_y < MAX_DISTANCE, dist_x + dist_y
+    dist_x = abs(int(x_1[0] - x_2[0]))
+    dist_y = abs(int(x_1[1] - x_2[1]))
+    return abs(x_1[5] - x_2[5]) < 0.5 and dist_x < MAX_DISTANCE and dist_y < MAX_DISTANCE, dist_x + dist_y
 
 
 def update(x_pred, x_meas):
     return x_meas * 0.7 + x_pred * 0.3
+
+
+def update_box(centeroid, box):
+    box_center = calculate_centeroid(box)
+    diff_x = int(centeroid[0] - box_center[0])
+    diff_y = int(centeroid[1] - box_center[1])
+    box[0] += diff_x
+    box[2] += diff_x
+    box[1] += diff_y
+    box[3] += diff_y
+    return box
 
 
 def filter_results(detection_results, results_of_interest):
@@ -199,7 +210,7 @@ def filter_results(detection_results, results_of_interest):
     # a : acceleration
     a = 0.3  # we assume, that the center movement declines
     # d : visibility decline per frame
-    d = 1
+    d = 0.8
     # visbility_threshold : threshold when an object is removed
     visbility_threshold = 0.4
     # t : time in frame is set to 1, because it does not change and units don't matter
@@ -246,6 +257,8 @@ def filter_results(detection_results, results_of_interest):
     assert len(centeroids) == len(filtered)
     total_frames = len(centeroids)
 
+    print([len(x) for x in filtered])
+
     # we start predicting from the first measurement and filter the following measurement
     # so the last frame can be skipped, because a new prediction is not necessary
     for frame in range(total_frames - 1):
@@ -259,11 +272,14 @@ def filter_results(detection_results, results_of_interest):
                 is_similar, similarity = check_similarity(x_pred, x_meas)
                 # check if possible match
                 if not is_similar:
+                    print("not similar")
                     continue
                 # find closest match
                 if similarity < min_similarity:
                     min_similarity = similarity
                     match = index
+
+            print(f"match: {match}")
 
             # if there is no match found, use prediction only
             if match < 0:
@@ -271,7 +287,7 @@ def filter_results(detection_results, results_of_interest):
                 if x_pred[4] < visbility_threshold:
                     continue
                 centeroids[frame + 1].append(x_pred)
-
+                print("add")
                 filtered[frame + 1].append(filtered[frame][match])
                 filtered[frame + 1][match]["box"] = update_box(x_pred, filtered[frame + 1][match].get("box"))
                 continue
@@ -279,23 +295,12 @@ def filter_results(detection_results, results_of_interest):
             # combine the measurement and the prediction
             x_comb = update(x_pred, centeroids[frame + 1][match])
             centeroids[frame + 1][match] = x_comb
-
-            filtered[frame + 1].append(filtered[frame][match])
             filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
+            print(f"comb {len(filtered[frame + 1])} {len(filtered[frame])}")
+
+    print([len(x) for x in filtered])
 
     return filtered, centeroids
-
-
-def update_box(centeroid, box):
-    new_box = box
-    box_center = calculate_centeroid(box)
-    diff_x = int(centeroid[0] - box_center[0])
-    diff_y = int(centeroid[1] - box_center[1])
-    new_box[0] += diff_x
-    new_box[2] += diff_x
-    new_box[1] += diff_y
-    new_box[3] += diff_y
-    return new_box
 
 
 def main(args):
@@ -368,11 +373,11 @@ def main(args):
                 progress_bar = "[" + "█" * progress + "░" * \
                     (PROGRESS_BAR_WIDTH-progress) + "]" + f" (Frame {len(detection_results)}/{len(frame_files)})"
                 print(base_string + progress_bar, end="\r", flush=True)
+            print("")  # go to next line
 
             detection_results, center_results = filter_results(detection_results, to_blur)
             for frame_file, detection_result, centeroids in zip(frame_files, detection_results, center_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
-
                 censored_frame = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
 
                 # for center in centeroids:
@@ -384,7 +389,7 @@ def main(args):
 
             censored_frames[0].save(os.path.join(out_dir, f'{name}.webp'), append_images=censored_frames[1:],
                                     save_all=True, optimize=False, duration=frame_duration, loop=0)
-            print("")  # go to next line
+
             continue
         # Image is not animated
         else:
