@@ -153,7 +153,7 @@ def replace_in_image(into_image, from_image, box, shape="rectangle"):
 
 def censor(image, boxes, parts_to_blur=[], with_stamp=False):
     censored_image = image.copy()
-    pixelized_image = pixelize(image, 50)
+    pixelized_image = pixelize(image, 25)
 
     if parts_to_blur:
         boxes = [i for i in boxes if i["label"] in parts_to_blur]
@@ -257,7 +257,7 @@ def filter_results(detection_results, results_of_interest):
     # a : acceleration
     a = 0.3  # we assume, that the center movement declines
     # d : visibility decline per frame
-    d = 0.9
+    d = 0.93
     # visbility_threshold : threshold when an object is removed
     visibility_threshold = 0.4
     # t : time in frame is set to 1, because it does not change and units don't matter
@@ -297,10 +297,11 @@ def filter_results(detection_results, results_of_interest):
 
         for result in filtered[frame]:
             # calculate prediction
-            for index, print_result in enumerate(filtered[frame]):
-                logging.debug("Before: Current - Index %s: %s", index, print_result)
-            for index, print_result in enumerate(filtered[frame + 1]):
-                logging.debug("Before: Next - Index %s: %s", index, print_result)
+            if logging.root.level == logging.DEBUG:
+                for index, print_result in enumerate(filtered[frame]):
+                    logging.debug("Before: Current - Index %s: %s", index, print_result)
+                for index, print_result in enumerate(filtered[frame + 1]):
+                    logging.debug("Before: Next - Index %s: %s", index, print_result)
             # logging.debug("Before: Result Index %s: %s", result_index, frame_result)
             x = result.get("centeroid")
             x_pred = A.dot(x)
@@ -327,10 +328,11 @@ def filter_results(detection_results, results_of_interest):
                 x_comb = update(x_pred, x_meas)
                 filtered[frame + 1][match]["centeroid"] = x_comb
                 filtered[frame + 1][match]["box"] = update_box(x_comb, filtered[frame + 1][match].get("box"))
-                for index, print_result in enumerate(filtered[frame]):
-                    logging.debug("Current - Index %s: %s", index, print_result)
-                for index, print_result in enumerate(filtered[frame + 1]):
-                    logging.debug("Next - Index %s: %s", index, print_result)
+                if logging.root.level == logging.DEBUG:
+                    for index, print_result in enumerate(filtered[frame]):
+                        logging.debug("Current - Index %s: %s", index, print_result)
+                    for index, print_result in enumerate(filtered[frame + 1]):
+                        logging.debug("Next - Index %s: %s", index, print_result)
                 continue
 
             # if the prediction is too old do not continue to track it
@@ -428,6 +430,9 @@ def main(args):
 
             if args.filter:
                 detection_results = filter_results(detection_results, to_blur)
+                detection_results.reverse()
+                detection_results = filter_results(detection_results, to_blur)
+                detection_results.reverse()
 
             for frame_file, frame_result in zip(frame_files, detection_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
@@ -459,8 +464,8 @@ def main(args):
             censored_file_name = filename
             out_path = os.path.join(out_dir, censored_file_name)
             cv2.imwrite(out_path, censored_image)
-
-    print(f"[ 100% ]  Processed {processed_images} of {len(images)}. Failed: {len(images) - processed_images}.")
+    failed_string = f"Failed: {len(images) - processed_images}." if len(images) - processed_images > 0 else ""
+    print(f"[ 100% ]  Processed {processed_images} of {len(images)} files. {failed_string}")
 
 
 if __name__ == "__main__":
