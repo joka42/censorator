@@ -204,16 +204,22 @@ def calculate_centeroid(box):
     return [int((box[2] + box[0])/2.0), int((box[3] + box[1])/2.0)]
 
 
-def check_similarity(x_1, x_2):
-    MAX_DISTANCE = 50  # pixel
+def check_similarity(x_1, x_2, max_distance_x, max_distance_y):
     dist_x = abs(int(x_1[0] - x_2[0]))
     dist_y = abs(int(x_1[1] - x_2[1]))
     logging.debug("similarity check: class diff: %s", abs(x_1[5] - x_2[5]))
-    return abs(x_1[5] - x_2[5]) < 0.5 and dist_x < MAX_DISTANCE and dist_y < MAX_DISTANCE, dist_x + dist_y
+    return abs(x_1[5] - x_2[5]) < 0.5 and dist_x < max_distance_x and dist_y < max_distance_y, \
+        dist_x/max_distance_x + dist_y/max_distance_y
 
 
 def update(x_pred, x_meas):
-    return x_meas * 0.7 + x_pred * 0.3
+    factor_meas = pow(x_meas[4], 2)
+    factor_pred = pow(x_pred[4], 2)
+    new = (x_meas * factor_meas + x_pred * factor_pred) / (factor_meas + factor_pred)
+    new[2] = x_meas[2]
+    new[3] = x_meas[3]
+    new[4] = max(x_pred[4], x_meas[4])  # if measurement was found, the certainty is reset to 1
+    return new
 
 
 def update_box(centeroid, box):
@@ -244,7 +250,100 @@ def resize_box(box, factor):
     return new_box
 
 
-def filter_results(detection_results, results_of_interest):
+def processImage(path, out_path=None):
+    '''
+    Iterate the GIF, extracting each frame.
+    '''
+    frames = []
+    mode = analyzeImage(path)['mode']
+    print(mode)
+    im = Image.open(path)
+
+    i = 0
+    p = im.getpalette()
+    last_frame = im.convert('RGBA')
+
+    try:
+        while True:
+            print(i)
+            # print(f"saving {path} ({mode}) frame {i}, {im.size}")
+
+            '''
+            If the GIF uses local colour tables, each frame will have its own palette.
+            If not, we need to apply the global palette to the new frame.
+            '''
+            if not im.getpalette():
+                try:
+                    im.putpalette(p)
+                except ValueError:
+                    # If only one image is found, only the one image is put into the frame list
+                    new_frame = Image.new('RGBA', im.size)
+                    new_frame.paste(im, (0, 0), im.convert('RGBA'))
+                    frames.append(new_frame)
+                    break
+
+            '''
+            Is this file a "partial"-mode GIF where frames update a region of a different size to the entire image?
+            If so, we need to construct the new frame by pasting it on top of the preceding frames.
+            '''
+            if mode == 'partial':
+                new_frame = Image.new('RGBA', im.size, color=None)
+                new_frame.paste(last_frame)
+                new_frame.paste(im, (0, 0), im.convert('RGBA'))
+            elif mode == "full":
+                new_frame = im
+
+            if out_path:
+                new_frame.save(os.path.join(out_path, os.path.basename(path).split(".")[:-1][0]) + f'_{i}.png', 'PNG')
+
+            i += 1
+            last_frame = new_frame
+            frames.append(new_frame)
+            im.seek(i)
+    except EOFError:
+        pass
+
+    return frames
+
+
+def get_total_frames(images):
+    total_frames = 0
+    for image in images:
+        im = Image.open(image)
+        i = 0
+        try:
+            while True:
+                i += 1
+                im.seek(i)
+        except EOFError:
+            total_frames += i
+
+    return total_frames
+
+
+def find_match(result, result_pool):
+    match = -1
+    min_similarity = math.inf
+    box = result.get("box")
+    scaling_factor = 1  # a little more than half
+    max_distance_x = int(scaling_factor*(box[2] - box[0]))
+    max_distance_y = int(scaling_factor*(box[3] - box[1]))
+    centeroid = result.get("centeroid")
+    for index, possible_match in enumerate(result_pool):
+        possible_match_centeroid = possible_match.get("centeroid")
+        is_similar, similarity = check_similarity(centeroid, possible_match_centeroid, max_distance_x, max_distance_y)
+        # check if possible match
+        if not is_similar:
+            logging.debug("not similar")
+            continue
+        # find closest match
+        if similarity < min_similarity:
+            min_similarity = similarity
+            match = index
+    return match
+
+
+def filter_results(detection_results, results_of_interest, with_velocity=False):
     # other ideas
     # https://pypi.org/project/filterpy/
     # kf = KalmanFilter(dim_x=2, dim_z=1)
@@ -255,11 +354,11 @@ def filter_results(detection_results, results_of_interest):
     """
     # ====== Parameters ======
     # a : acceleration
-    a = 0.3  # we assume, that the center movement declines
-    # d : visibility decline per frame
-    d = 0.93
+    a = 1  #
+    # d : prediction confidence decline per frame
+    d = 0.9
     # visbility_threshold : threshold when an object is removed
-    visibility_threshold = 0.4
+    visibility_threshold = 0.1
     # t : time in frame is set to 1, because it does not change and units don't matter
     t = 1
     # A : prediction matrix
@@ -275,7 +374,6 @@ def filter_results(detection_results, results_of_interest):
     # Data extraction
     # TODO: calculate velocity and add it to the vector
     filtered = []
-
     for frame_results in detection_results:
         filtered_frame_results = [detection_result for detection_result in frame_results
                                   if detection_result.get("label") in results_of_interest]
@@ -287,6 +385,18 @@ def filter_results(detection_results, results_of_interest):
     for frame_result in filtered:
         for result in frame_result:
             result['centeroid'] = centeroid_from(result)
+
+    # calculate velocity between frames
+    if with_velocity:
+        for current_frame, next_frame in zip(filtered[:-1], filtered[1:]):
+            for result in current_frame:
+                match = find_match(result, next_frame)
+                if match < 0:
+                    continue
+                next_center = next_frame[match].get("centeroid")
+                current = result.get("centeroid")
+                current[2] = next_center[0] - current[0]  # x velocity
+                current[3] = next_center[1] - current[1]  # y velocity
 
     logging.debug(str([len(x) for x in filtered]))
 
@@ -306,19 +416,8 @@ def filter_results(detection_results, results_of_interest):
             x = result.get("centeroid")
             x_pred = A.dot(x)
 
-            min_similarity = math.inf
-            match = -1
-            for index, next_frame_results in enumerate(filtered[frame + 1]):
-                x_meas = next_frame_results.get("centeroid")
-                is_similar, similarity = check_similarity(x_pred, x_meas)
-                # check if possible match
-                if not is_similar:
-                    logging.debug("not similar")
-                    continue
-                # find closest match
-                if similarity < min_similarity:
-                    min_similarity = similarity
-                    match = index
+            match = find_match(result, filtered[frame + 1])
+            logging.debug("Found Match: %s", match)
 
             # combine the measurement and the prediction
             if match >= 0:
@@ -355,6 +454,9 @@ def main(args):
 
     images = images_in(args.input)
 
+    total_frames = get_total_frames(images)
+    logging.debug("Total frame count: %s", total_frames)
+
     out_dir = args.output if args.output else "./"
     if not out_dir.endswith("/"):
         out_dir += "/"
@@ -390,7 +492,7 @@ def main(args):
             print(base_string + progress_bar, end="\r", flush=True)
 
             tempdir = tempfile.mkdtemp()
-            frame_duration = 40  # ms, defaults to 40 ms, 25 Hz
+            frame_duration = 0
             if extension.lower() == ".gif":
                 # ffmpeg seems to have fewer/no artifacts than the frameextractor.py that I found online
                 # it had some black artifacts in a couple of frames that I could not fix
@@ -429,10 +531,13 @@ def main(args):
             print("")  # go to next line
 
             if args.filter:
-                detection_results = filter_results(detection_results, to_blur)
-                detection_results.reverse()
-                detection_results = filter_results(detection_results, to_blur)
-                detection_results.reverse()
+                for i in range(2):
+                    if not i % 2:
+                        detection_results = filter_results(detection_results, to_blur, with_velocity=True)
+                        continue
+                    detection_results.reverse()
+                    detection_results = filter_results(detection_results, to_blur)
+                    detection_results.reverse()
 
             for frame_file, frame_result in zip(frame_files, detection_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
