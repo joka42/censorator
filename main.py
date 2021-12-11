@@ -125,7 +125,7 @@ def replace_in_image(into_image, from_image, box, shape="rectangle"):
         print("ERROR: unknown shape")
 
 
-def censor(image, boxes, parts_to_blur=[], with_stamp=False):
+def censor(image, boxes, parts_to_blur=[], with_stamp=False, black_bar=False):
     censored_image = image.copy()
     pixelized_image = pixelize(image, 25)
 
@@ -151,8 +151,8 @@ def censor(image, boxes, parts_to_blur=[], with_stamp=False):
         box = resize_box(box, 0.9)
         replace_in_image(censored_image, pixelized_image, box, "rectangle")
 
-    if len(boobs) == 2:
-        black_bar(censored_image, boobs[0].get("box"), boobs[1].get("box"))
+    if black_bar and len(boobs) == 2:
+        apply_black_bar(censored_image, boobs[0].get("box"), boobs[1].get("box"))
     else:
         for item in boobs:
             box = item.get("box")
@@ -174,7 +174,7 @@ def calculate_centeroid(box):
     return [int((box[2] + box[0])/2.0), int((box[3] + box[1])/2.0)]
 
 
-def black_bar(image, box_1, box_2, scaling=0.65):
+def apply_black_bar(image, box_1, box_2, scaling=0.65):
     # Average box size offset based on box sizes
     offset = box_1[2] - box_1[0] + box_1[3] - box_1[1] + box_2[2] - box_2[0] + box_2[3] - box_2[1]
     offset /= 4
@@ -554,9 +554,16 @@ def main(args):
                     detection_results = filter_results(detection_results, to_blur)
                     detection_results.reverse()
 
+            boobs_in_frames = []
+            for frame_result in detection_results:
+                boobs_in_frames.append([item for item in frame_result if item.get("label") == "EXPOSED_BREAST_F"])
+            black_bar = all([len(boobs_in_frame) == 2 or len(boobs_in_frame)
+                            == 0 for boobs_in_frame in boobs_in_frames])
+            logging.debug("Black bars active: %s", black_bar)
             for frame_file, frame_result in zip(frame_files, detection_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
-                censored_frame = censor(image, boxes=frame_result, parts_to_blur=to_blur, with_stamp=args.stamped)
+                censored_frame = censor(image, boxes=frame_result, parts_to_blur=to_blur,
+                                        with_stamp=args.stamped, black_bar=black_bar)
 
                 if args.debug and args.filter:
                     for result in frame_result:
@@ -580,7 +587,8 @@ def main(args):
                 print(f'Processing failed. Image "{filename}" may be corrupted...')
                 processed_images -= 1
                 continue
-            censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur, with_stamp=args.stamped)
+            censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur,
+                                    with_stamp=args.stamped, black_bar=True)
             censored_file_name = filename
             out_path = os.path.join(out_dir, censored_file_name)
             cv2.imwrite(out_path, censored_image)
