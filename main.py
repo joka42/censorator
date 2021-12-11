@@ -134,20 +134,36 @@ def censor(image, boxes, parts_to_blur=[], with_stamp=False):
     else:
         boxes = [i for i in boxes]
 
-    # put pussy at the end so that the stamp is not distorted
+    # split by category, so we can apply different methods of censoring
     genitalia = [i for i in boxes if i["label"] == "EXPOSED_GENITALIA_F"]
-    boxes = [i for i in boxes if i["label"] != "EXPOSED_GENITALIA_F"]
-    boxes += genitalia
+    boobs = [i for i in boxes if i["label"] == "EXPOSED_BREAST_F"]
+    rest = [i for i in boxes if i not in genitalia and i not in boobs]
 
-    for item in boxes:
-        box = item["box"]
-        if item.get("label") == "EXPOSED_BREAST_F":
+    logging.debug("Censoring %s genitalia, %s boobs and %s rest", len(genitalia), len(boobs), len(rest))
+
+    # Order of censoring:
+    # 1. plain pixelization
+    # 2. black bars, if applicable
+    # 3. stamped pussy
+    # TODO if it is not stamped, then the black bars should go last
+    for item in rest:
+        box = item.get("box")
+        box = resize_box(box, 0.9)
+        replace_in_image(censored_image, pixelized_image, box, "rectangle")
+
+    if len(boobs) == 2:
+        black_bar(censored_image, boobs[0].get("box"), boobs[1].get("box"))
+    else:
+        for item in boobs:
+            box = item.get("box")
             box = resize_box(box, 0.9)
-        replace_in_image(censored_image, pixelized_image, box,
-                         "circle" if item["label"] == "EXPOSED_GENITALIA_F" else "rectangle")
+            replace_in_image(censored_image, pixelized_image, box, "rectangle")
+
+    for item in genitalia:
+        box = item.get("box")
+        replace_in_image(censored_image, pixelized_image, box, "circle")
         if with_stamp:
-            if item["label"] == "EXPOSED_GENITALIA_F":
-                stamp(censored_image, box)
+            stamp(censored_image, box)
 
     return censored_image
 
@@ -158,26 +174,57 @@ def calculate_centeroid(box):
     return [int((box[2] + box[0])/2.0), int((box[3] + box[1])/2.0)]
 
 
-def black_bar(image, box_1, box_2):
-    offset = 20  # px
-    center_1 = calculate_centeroid(box_1)
-    center_2 = calculate_centeroid(box_2)
-    top_left = [min(center_1[0], center_2[0]) - offset, min(center_1[1], center_2[1]) - offset]
-    top_right = [max(center_1[0], center_2[0]) + offset, min(center_1[1], center_2[1]) - offset]
-    bottom_right = [max(center_1[0], center_2[0]) + offsett, max(center_1[1], center_2[1]) + offset]
-    bottom_left = [min(center_1[0], center_2[0]) - offset, max(center_1[1], center_2[1]) + offset]
-    pts = np.array([top_left, top_right, bottom_right, bottom_left], np.int32)
-    #pts = pts.reshape((-1, 1, 2))
-    #cv.polylines(image, [pts], True, (0, 0, 0))
-    cv2.fillPoly(image, pts, color=(0, 0, 0))
+def black_bar(image, box_1, box_2, scaling=0.65):
+    # Average box size offset based on box sizes
+    offset = box_1[2] - box_1[0] + box_1[3] - box_1[1] + box_2[2] - box_2[0] + box_2[3] - box_2[1]
+    offset /= 4
+    # we measure from the center so only half
+    offset /= 2
+    # we don't want to cover all of the area
+    offset *= scaling
+
+    center_1 = np.array(calculate_centeroid(box_1))
+    center_2 = np.array(calculate_centeroid(box_2))
+    connection = center_2-center_1
+
+    # assuming that the first box is on the left, we need to change the centers if that is not the case
+    if connection[0] < 0:
+        tmp = center_1
+        center_1 = center_2
+        center_2 = tmp
+        connection = center_2 - center_1
+
+    # calculate width
+    dist = np.linalg.norm(connection)
+
+    top_left = [center_1[0] - offset, center_1[1] - offset]
+    top_right = [center_1[0] + dist + offset, center_1[1] - offset]
+    bottom_right = [center_1[0] + dist + offset, center_1[1] + offset]
+    bottom_left = [center_1[0] - offset, center_1[1] + offset]
+    pts = np.array([top_left, top_right, bottom_right, bottom_left])
+
+    # rotation matrix
+    theta = np.arccos(connection[0] / dist)
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.array(((c, -s), (s, c)))
+
+    pts_shifted = [pt - center_1 for pt in pts]
+    pts_shifted_rotated = [R.dot(pt) for pt in pts_shifted]
+    # pts_shifted_rotated = [pt for pt in pts_shifted]
+    pts_rotated = [pt + center_1 for pt in pts_shifted_rotated]
+    pts_rotated = np.array(pts_rotated, np.int32)
+
+    logging.debug("Black bar poly: %s", np.asarray(pts_rotated))
+    cv2.fillPoly(image, [pts_rotated], color=(0, 0, 0))
+    # add anti aliasing to smooth the edges
+    cv2.polylines(image, [pts_rotated], True, color=(0, 0, 0), thickness=2, lineType=cv2.LINE_AA)
 
 
 def check_similarity(x_1, x_2, max_distance_x, max_distance_y):
     dist_x = abs(int(x_1[0] - x_2[0]))
     dist_y = abs(int(x_1[1] - x_2[1]))
     logging.debug("similarity check: class diff: %s", abs(x_1[5] - x_2[5]))
-    return abs(x_1[5] - x_2[5]) < 0.5 and dist_x < max_distance_x and dist_y < max_distance_y, \
-        dist_x/max_distance_x + dist_y/max_distance_y
+    return abs(x_1[5] - x_2[5]) < 0.5 and dist_x < max_distance_x and dist_y < max_distance_y, dist_x/max_distance_x + dist_y/max_distance_y
 
 
 def update(x_pred, x_meas):
@@ -331,11 +378,11 @@ def filter_results(detection_results, results_of_interest, with_velocity=False):
     t = 1
     # A : prediction matrix
     A = np.array([[1, 0, t, 0, 0, 0],
-                  [0, 1, 0, t, 0, 0],
-                  [0, 0, a, 0, 0, 0],
-                  [0, 0, 0, a, 0, 0],
-                  [0, 0, 0, 0, d, 0],
-                  [0, 0, 0, 0, 0, 1]
+                 [0, 1, 0, t, 0, 0],
+                 [0, 0, a, 0, 0, 0],
+                 [0, 0, 0, a, 0, 0],
+                 [0, 0, 0, 0, d, 0],
+                 [0, 0, 0, 0, 0, 1]
                   ])
     # A = np.ndarray(shape=(6, 6), buffer=A, dtype=float)
     # ========================
