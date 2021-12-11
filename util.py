@@ -1,6 +1,7 @@
 #!/bin/python3
 
 import os
+from PIL import Image
 
 
 def images_in(path):
