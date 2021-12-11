@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 import webp
 
+from util import *
 
 PROGRESS_BAR_WIDTH = 20
 INFINITY = 9223372036854775807
@@ -97,33 +98,6 @@ def stamp(image, box):
              medium_size, color] + alpha_s * s_img[:, :, color])
 
 
-def analyzeImage(path):
-    '''
-    Pre-process pass over the image to determine the mode (full or additive).
-    Necessary as assessing single frames isn't reliable. Need to know the mode
-    before processing all frames.
-    '''
-    im = Image.open(path)
-    results = {
-        'size': im.size,
-        'mode': 'full',
-        'duration': im.info['duration'] if "duration" in im.info.keys() and im.info.get("duration") > 0 else 80,
-    }
-    try:
-        while True:
-            if im.tile:
-                tile = im.tile[0]
-                update_region = tile[1]
-                update_region_dimensions = update_region[2:]
-                if update_region_dimensions != im.size:
-                    results['mode'] = 'partial'
-                    break
-            im.seek(im.tell() + 1)
-    except EOFError:
-        pass
-    return results
-
-
 def replace_in_image(into_image, from_image, box, shape="rectangle"):
     """
     box: [x_min, y_min, x_max, y_max]
@@ -178,30 +152,24 @@ def censor(image, boxes, parts_to_blur=[], with_stamp=False):
     return censored_image
 
 
-def images_in(path):
-    filenames = []
-    if os.path.isdir(path):
-        # print("Filenames: ")
-        filenames = []
-        for _, _, files in os.walk(path):
-            for file in files:
-                filenames.append(os.path.abspath(os.path.join(path, file)))
-    elif os.path.isfile(path):
-        filenames.append(path)
-    else:
-        print("File or directory not found.")
-
-    images = [f for f in filenames if f.lower().endswith(
-        ".jpg") or f.lower().endswith(".png") or f.lower().endswith(".jpeg") or f.lower().endswith(".gif") or f.lower().endswith(".webp")]
-
-    # print(images)
-    return images
-
-
 def calculate_centeroid(box):
     # box: [x_min, y_min, x_max, y_max]
     # return [x_center, y_center]
     return [int((box[2] + box[0])/2.0), int((box[3] + box[1])/2.0)]
+
+
+def black_bar(image, box_1, box_2):
+    offset = 20  # px
+    center_1 = calculate_centeroid(box_1)
+    center_2 = calculate_centeroid(box_2)
+    top_left = [min(center_1[0], center_2[0]) - offset, min(center_1[1], center_2[1]) - offset]
+    top_right = [max(center_1[0], center_2[0]) + offset, min(center_1[1], center_2[1]) - offset]
+    bottom_right = [max(center_1[0], center_2[0]) + offsett, max(center_1[1], center_2[1]) + offset]
+    bottom_left = [min(center_1[0], center_2[0]) - offset, max(center_1[1], center_2[1]) + offset]
+    pts = np.array([top_left, top_right, bottom_right, bottom_left], np.int32)
+    #pts = pts.reshape((-1, 1, 2))
+    #cv.polylines(image, [pts], True, (0, 0, 0))
+    cv2.fillPoly(image, pts, color=(0, 0, 0))
 
 
 def check_similarity(x_1, x_2, max_distance_x, max_distance_y):
