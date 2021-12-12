@@ -205,6 +205,9 @@ def apply_black_bar(image, box_1, box_2, scaling=0.65):
 
     # rotation matrix
     theta = np.arccos(connection[0] / dist)
+    # the angle is not signed, so check rotation direction and set sign accordingly
+    if center_2[1] < center_1[1]:
+        theta = -theta
     c, s = np.cos(theta), np.sin(theta)
     R = np.array(((c, -s), (s, c)))
 
