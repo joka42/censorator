@@ -55,9 +55,9 @@ Now you should be able to run the script using
 
     -c / --casual:   [optional] Only censor exposed breasts and female genitalia
 
-    --stamped:       [optinal] Apply the pussy-free stamp to female genitalia
+    --stamped:       [optional] Apply the pussy-free stamp to female genitalia
 
-    --skip-existing: [optinal] Skip images that are already in the output directory, do not overwrite them.
+    --skip-existing: [optional] Skip images that are already in the output directory, do not overwrite them.
 
     --filter:        [optional] Apply a (Kalman-like) filter to the results for animated images. This might help to censor frames in which the neuronal net did not identify all areas of interest.
 
