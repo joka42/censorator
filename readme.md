@@ -47,33 +47,21 @@ Now you should be able to run the script using
 
 ### Advanced Command Line Options
 
-    parser.add_argument('-i', '--input')
-    parser.add_argument('-o', '--output', required=False)
-    parser.add_argument('-s', '--strict', action="store_true", default=False)
-    parser.add_argument('-c', '--casual', action="store_true", default=False)
-    parser.add_argument('--stamped', action="store_true", default=False)
-    parser.add_argument('--skip_existing', action="store_true", default=False)
-    parser.add_argument('--filter', action="store_true", default=False)
-    parser.add_argument('--debug', action="store_true", default=False)
+    -i / --input:   input path. Image file or directory. If it is a directory, all images in the directory will be processed.
 
--i / --input:   input path. Image file or directory. If it is a directory, all images in the directory will be processed.
+    -o / --output:  [optional] Output directory. Censored images will be stored in this directory. If no output directory is specified, the working directory/current directory is used
 
--o / --output:  [optional] Output directory. Censored images will be stored in this directory. If no output directory is specified,
-the working directory/current directory is used
+    -s / --strict:   [optional] Censor also covered breasts and butts. 
 
--s / --strict:  [optional] Censor also covered breasts and butts. 
+    -c / --casual:   [optional] Only censor exposed breasts and female genitalia
 
--c / --casual:  [optional] Only censor exposed breasts and female genitalia
+    --stamped:       [optinal] Apply the pussy-free stamp to female genitalia
 
---stamped:      [optinal] Apply the pussy-free stamp to female genitalia
+    --skip-existing: [optinal] Skip images that are already in the output directory, do not overwrite them.
 
---skip-existing: [optinal] Skip images that are already in the output directory, do not overwrite them.
+    --filter:        [optional] Apply a (Kalman-like) filter to the results for animated images. This might help to censor frames in which the neuronal net did not identify all areas of interest.
 
---filter:       [optional] Apply a (Kalman-like) filter to the results for animated images. This might help to censor 
-frames in which the neuronal net did not identify all areas of interest.
-
---debug:        [optoinal] Output all debug information and apply a dot in the center of identified areas (should only 
-be used for debugging, because the output images contain the red dots).
+    --debug:         [optoinal] Output all debug information and apply a dot in the center of identified areas (should only be used for debugging, because the output images contain the red dots).
 
 
 
