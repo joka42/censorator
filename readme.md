@@ -49,7 +49,7 @@ Now you should be able to run the script using
 
     -i / --input:   input path. Image file or directory. If it is a directory, all images in the directory will be processed.
 
-    -o / --output:  [optional] Output directory. Censored images will be stored in this directory. If no output directory is specified, the working directory/current directory is used
+    -o / --output:   [optional] Output directory. Censored images will be stored in this directory. If no output directory is specified, the working directory/current directory is used
 
     -s / --strict:   [optional] Censor also covered breasts and butts. 
 
