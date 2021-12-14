@@ -1,6 +1,6 @@
 wheel
 nudenet
-opencv-python-headless
+opencv-python
 numpy
 pillow
 webp
