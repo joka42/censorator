@@ -174,14 +174,16 @@ def calculate_centeroid(box):
     return [int((box[2] + box[0])/2.0), int((box[3] + box[1])/2.0)]
 
 
-def apply_black_bar(image, box_1, box_2, scaling=0.65):
+def apply_black_bar(image, box_1, box_2, scaling_x=0.8, scaling_y=0.45):
     # Average box size offset based on box sizes
     offset = box_1[2] - box_1[0] + box_1[3] - box_1[1] + box_2[2] - box_2[0] + box_2[3] - box_2[1]
     offset /= 4
     # we measure from the center so only half
     offset /= 2
     # we don't want to cover all of the area
-    offset *= scaling
+    offset_x = offset * scaling_x
+    offset_y = offset * scaling_y
+
 
     center_1 = np.array(calculate_centeroid(box_1))
     center_2 = np.array(calculate_centeroid(box_2))
@@ -197,10 +199,10 @@ def apply_black_bar(image, box_1, box_2, scaling=0.65):
     # calculate width
     dist = np.linalg.norm(connection)
 
-    top_left = [center_1[0] - offset, center_1[1] - offset]
-    top_right = [center_1[0] + dist + offset, center_1[1] - offset]
-    bottom_right = [center_1[0] + dist + offset, center_1[1] + offset]
-    bottom_left = [center_1[0] - offset, center_1[1] + offset]
+    top_left =     [center_1[0] - offset_x,        center_1[1] - offset_y]
+    top_right =    [center_1[0] + dist + offset_x, center_1[1] - offset_y]
+    bottom_right = [center_1[0] + dist + offset_x, center_1[1] + offset_y]
+    bottom_left =  [center_1[0] - offset_x,        center_1[1] + offset_y]
     pts = np.array([top_left, top_right, bottom_right, bottom_left])
 
     # rotation matrix
