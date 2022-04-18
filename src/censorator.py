@@ -12,8 +12,6 @@ import numpy as np
 from PIL import Image
 import webp
 
-from util import *
-
 PROGRESS_BAR_WIDTH = 20
 INFINITY = 9223372036854775807
 
@@ -122,7 +120,7 @@ def replace_in_image(into_image, from_image, box, shape="rectangle"):
         into_image[box[1]:box[3], box[0]:box[2]
                    ] = from_image[box[1]:box[3], box[0]:box[2]]
     else:
-        print("ERROR: unknown shape")
+        logging.error("ERROR: unknown shape")
 
 
 def censor(image, boxes, parts_to_blur=[], with_stamp=False, black_bar=False):
@@ -184,7 +182,6 @@ def apply_black_bar(image, box_1, box_2, scaling_x=0.8, scaling_y=0.45):
     offset_x = offset * scaling_x
     offset_y = offset * scaling_y
 
-
     center_1 = np.array(calculate_centeroid(box_1))
     center_2 = np.array(calculate_centeroid(box_2))
     connection = center_2-center_1
@@ -199,10 +196,10 @@ def apply_black_bar(image, box_1, box_2, scaling_x=0.8, scaling_y=0.45):
     # calculate width
     dist = np.linalg.norm(connection)
 
-    top_left =     [center_1[0] - offset_x,        center_1[1] - offset_y]
-    top_right =    [center_1[0] + dist + offset_x, center_1[1] - offset_y]
+    top_left = [center_1[0] - offset_x,        center_1[1] - offset_y]
+    top_right = [center_1[0] + dist + offset_x, center_1[1] - offset_y]
     bottom_right = [center_1[0] + dist + offset_x, center_1[1] + offset_y]
-    bottom_left =  [center_1[0] - offset_x,        center_1[1] + offset_y]
+    bottom_left = [center_1[0] - offset_x,        center_1[1] + offset_y]
     pts = np.array([top_left, top_right, bottom_right, bottom_left])
 
     # rotation matrix
@@ -276,7 +273,7 @@ def processImage(path, out_path=None):
     '''
     frames = []
     mode = analyzeImage(path)['mode']
-    print(mode)
+    logging.debug(mode)
     im = Image.open(path)
 
     i = 0
@@ -285,13 +282,10 @@ def processImage(path, out_path=None):
 
     try:
         while True:
-            print(i)
-            # print(f"saving {path} ({mode}) frame {i}, {im.size}")
+            logging.debug(f"saving {path} ({mode}) frame {i}, {im.size}")
 
-            '''
-            If the GIF uses local colour tables, each frame will have its own palette.
-            If not, we need to apply the global palette to the new frame.
-            '''
+            # If the GIF uses local colour tables, each frame will have its own palette.
+            # If not, we need to apply the global palette to the new frame.
             if not im.getpalette():
                 try:
                     im.putpalette(p)
@@ -302,10 +296,8 @@ def processImage(path, out_path=None):
                     frames.append(new_frame)
                     break
 
-            '''
-            Is this file a "partial"-mode GIF where frames update a region of a different size to the entire image?
-            If so, we need to construct the new frame by pasting it on top of the preceding frames.
-            '''
+            # Is this file a "partial"-mode GIF where frames update a region of a different size to the entire image?
+            # If so, we need to construct the new frame by pasting it on top of the preceding frames.
             if mode == 'partial':
                 new_frame = Image.new('RGBA', im.size, color=None)
                 new_frame.paste(last_frame)
@@ -313,7 +305,7 @@ def processImage(path, out_path=None):
             elif mode == "full":
                 new_frame = im
 
-            if out_path:
+            if out_path and os.path.isdir(out_path):
                 new_frame.save(os.path.join(out_path, os.path.basename(path).split(".")[:-1][0]) + f'_{i}.png', 'PNG')
 
             i += 1
@@ -339,6 +331,52 @@ def get_total_frames(images):
             total_frames += i
 
     return total_frames
+
+
+def images_in(path):
+    filenames = []
+    if os.path.isdir(path):
+        filenames = []
+        for _, _, files in os.walk(path):
+            for file in files:
+                filenames.append(os.path.abspath(os.path.join(path, file)))
+    elif os.path.isfile(path):
+        filenames.append(path)
+    else:
+        logging.critical("File or directory not found.")
+
+    images = [f for f in filenames if f.lower().endswith(
+        ".jpg") or f.lower().endswith(".png") or f.lower().endswith(".jpeg") or f.lower().endswith(".gif") or f.lower().endswith(".webp")]
+
+    logging.debug("Filenames: ", images)
+    return images
+
+
+def analyzeImage(path):
+    '''
+    Pre-process pass over the image to determine the mode (full or additive).
+    Necessary as assessing single frames isn't reliable. Need to know the mode
+    before processing all frames.
+    '''
+    im = Image.open(path)
+    results = {
+        'size': im.size,
+        'mode': 'full',
+        'duration': im.info['duration'] if "duration" in im.info.keys() and im.info.get("duration") > 0 else 80,
+    }
+    try:
+        while True:
+            if im.tile:
+                tile = im.tile[0]
+                update_region = tile[1]
+                update_region_dimensions = update_region[2:]
+                if update_region_dimensions != im.size:
+                    results['mode'] = 'partial'
+                    break
+            im.seek(im.tell() + 1)
+    except EOFError:
+        pass
+    return results
 
 
 def find_match(result, result_pool):
@@ -432,7 +470,7 @@ def filter_results(detection_results, results_of_interest, with_velocity=False):
                     logging.debug("Before: Current - Index %s: %s", index, print_result)
                 for index, print_result in enumerate(filtered[frame + 1]):
                     logging.debug("Before: Next - Index %s: %s", index, print_result)
-            # logging.debug("Before: Result Index %s: %s", result_index, frame_result)
+            logging.debug("Before: Result Index %s: %s", result_index, frame_result)
             x = result.get("centeroid")
             x_pred = A.dot(x)
 
@@ -468,7 +506,18 @@ def filter_results(detection_results, results_of_interest, with_velocity=False):
     return filtered
 
 
-def main(args):
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--input')
+    parser.add_argument('-o', '--output', required=False)
+    parser.add_argument('-s', '--strict', action="store_true", default=False)
+    parser.add_argument('-c', '--casual', action="store_true", default=False)
+    parser.add_argument('--stamped', action="store_true", default=False)
+    parser.add_argument('--skip_existing', action="store_true", default=False)
+    parser.add_argument('--filter', action="store_true", default=False)
+    parser.add_argument('--debug', action="store_true", default=False)
+    args = parser.parse_args()
+
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
 
@@ -486,7 +535,7 @@ def main(args):
         original_image_count = len(images)
         images = [image for image in images if os.path.splitext(os.path.split(image)[1])[0] not in existing_images]
 
-        print(f"Skipping {original_image_count-len(images)} images that are already processed.")
+        logging.info(f"Skipping {original_image_count-len(images)} images that are already processed.")
 
     detector = NudeDetector()
     exposed_parts = ["EXPOSED_ANUS", "EXPOSED_BUTTOCKS", "EXPOSED_BREAST_F", "EXPOSED_GENITALIA_F"]
@@ -533,7 +582,7 @@ def main(args):
                 for frame_index, frame in enumerate(frames):
                     frame.save(f'{os.path.join(tempdir, name)}_{frame_index}.png', 'PNG')
             else:
-                print("Wrong image format.")
+                logging.error("Wrong image format.")
                 continue
 
             frame_files = images_in(tempdir)
@@ -563,7 +612,7 @@ def main(args):
             for frame_result in detection_results:
                 boobs_in_frames.append([item for item in frame_result if item.get("label") == "EXPOSED_BREAST_F"])
             black_bar = all([len(boobs_in_frame) == 2 or len(boobs_in_frame)
-                            == 0 for boobs_in_frame in boobs_in_frames])
+                             == 0 for boobs_in_frame in boobs_in_frames])
             logging.debug("Black bars active: %s", black_bar)
             for frame_file, frame_result in zip(frame_files, detection_results):
                 image = cv2.imread(frame_file, flags=cv2.IMREAD_UNCHANGED)
@@ -589,7 +638,7 @@ def main(args):
             detection_result = detector.detect(file)
             image = cv2.imread(file)
             if image is None:
-                print(f'Processing failed. Image "{filename}" may be corrupted...')
+                logging.error(f'Processing failed. Image "{filename}" may be corrupted...')
                 processed_images -= 1
                 continue
             censored_image = censor(image, boxes=detection_result, parts_to_blur=to_blur,
@@ -602,15 +651,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input')
-    parser.add_argument('-o', '--output', required=False)
-    parser.add_argument('-s', '--strict', action="store_true", default=False)
-    parser.add_argument('-c', '--casual', action="store_true", default=False)
-    parser.add_argument('--stamped', action="store_true", default=False)
-    parser.add_argument('--skip_existing', action="store_true", default=False)
-    parser.add_argument('--filter', action="store_true", default=False)
-    parser.add_argument('--debug', action="store_true", default=False)
-    args = parser.parse_args()
-    print(args)
-    main(args)
+    main()
